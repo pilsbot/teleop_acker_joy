@@ -52,7 +52,8 @@ namespace teleop_acker_joy
 struct TeleopAckerJoy::Impl
 {
 
-  static constexpr std::array lighting_names = {
+  // TODO: Perhaps individual message?
+  static constexpr std::array lighting_command_names = {
     "headlight",
     "turn_left",
     "turn_right",
@@ -82,7 +83,6 @@ struct TeleopAckerJoy::Impl
   bool sent_disable_msg;
   rclcpp::Time last_non_zero_cmd{0};
   rclcpp::Clock clock;
-
 };
 
 /**
@@ -101,10 +101,10 @@ TeleopAckerJoy::TeleopAckerJoy(const rclcpp::NodeOptions& options) : Node("teleo
       rclcpp::QoS(rclcpp::KeepLast(1)));
 
   std::map<std::string, int64_t> default_button_map;
-  for (const auto& lighting_name : Impl::lighting_names)
+  for (const auto& lighting_name : Impl::lighting_command_names)
   {
     const std::string publish_path = topic_prefix + lighting_name;
-    ROS_INFO_NAMED("TeleopAckerJoy", "publishing to %s", publish_path.c_str());
+    // ROS_INFO_NAMED("TeleopAckerJoy", "publishing to %s", publish_path.c_str());
     pimpl_->cmd_lights_pub.emplace(lighting_name,
         this->create_publisher<std_msgs::msg::Bool>(
           publish_path,
