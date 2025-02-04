@@ -26,6 +26,13 @@ teleop_node:
     enable_button: 4  # L1 shoulder button
     enable_turbo_button: 5  # R1 shoulder button
 
+    # other buttons:
+    lights:
+      flash: 0
+      headlight: 1
+      turn_left: 2
+      turn_right: 3
+
     failsafe_delay_ms: 500
 
 joy_node:

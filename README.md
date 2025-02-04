@@ -15,8 +15,13 @@ The package comes with the `teleop_node` that republishes `sensor_msgs/msg/Joy` 
   - Joystick messages to be translated to velocity commands.
 
 ## Published Topics
-- `cmd_vel (ackermann_msgs/msg/AckermannDriveStamped)`
+- Base path: `cmd/`
+- `cmd/vel (ackermann_msgs/msg/AckermannDriveStamped)`
   - Command velocity messages arising from Joystick commands.
+- `cmd/headlight (std_msgs/msg/Bool)`
+- `cmd/turnsignal_left (std_msgs/msg/Bool)`
+- `cmd/turnsignal_right (std_msgs/msg/Bool)`
+- `cmd/flash (std_msgs/msg/Bool)`
 
 ## Parameters (currently in the flow!)
 - `require_enable_button (bool, default: true)`
@@ -27,6 +32,13 @@ The package comes with the `teleop_node` that republishes `sensor_msgs/msg/Joy` 
 
 - `enable_turbo_button (int, default: -1)`
   - Joystick button to enable high-speed movement (disabled when -1).
+
+- `lights.<thing>`
+  - Define lights to map
+  - `lights.headlight            (int, default -1)`
+  - `lights.turn_left            (int, default -1)`
+  - `lights.turn_right           (int, default -1)`
+  - `lights.flash                (int, default -1)`
 
 - `axis.<thing>`
   - Define the joystick axis to use

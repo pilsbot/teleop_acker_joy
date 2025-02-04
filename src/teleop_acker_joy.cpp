@@ -34,6 +34,7 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSI
 #include <rclcpp_components/register_node_macro.hpp>
 #include <rcutils/logging_macros.h>
 #include <sensor_msgs/msg/joy.hpp>
+#include <std_msgs/msg/bool.hpp>
 
 #include "teleop_acker_joy/teleop_acker_joy.hpp"
 
@@ -50,21 +51,34 @@ namespace teleop_acker_joy
  */
 struct TeleopAckerJoy::Impl
 {
+
+  static constexpr std::array lighting_names = {
+    "headlight",
+    "turn_left",
+    "turn_right",
+    "flash",
+  };
+
   void joyCallback(const sensor_msgs::msg::Joy::SharedPtr joy);
   void sendCmdVelMsg(const sensor_msgs::msg::Joy::SharedPtr, const std::string& which_map);
+  void sendButtons(const sensor_msgs::msg::Joy::SharedPtr joy);
 
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_sub;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr cmd_vel_pub;
+  std::map<std::string, rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr> cmd_lights_pub;
 
   bool require_enable_button;
   int64_t enable_button;
   int64_t enable_turbo_button;
   std::chrono::milliseconds failsafe_delay_ms;
 
+  std::map<std::string, int64_t> button_map;
   std::map<std::string, int64_t> axis_map;
   std::map<std::string, std::map<std::string, double>> scale_map;
   std::map<std::string, double> offset_map;
 
+  sensor_msgs::msg::Joy lastMessage{};
+  std::map<std::string, bool> lightingStates{}; // could be an array, but we have the calc
   bool sent_disable_msg;
   rclcpp::Time last_non_zero_cmd{0};
   rclcpp::Clock clock;
@@ -78,27 +92,50 @@ TeleopAckerJoy::TeleopAckerJoy(const rclcpp::NodeOptions& options) : Node("teleo
 {
   pimpl_ = new Impl;
 
+  const std::string topic_prefix = "cmd/"; // TODO: make parameter?
+
+  // publisher
   pimpl_->cmd_vel_pub =
     this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
-      "cmd_vel",
+      topic_prefix + "vel",
       rclcpp::QoS(rclcpp::KeepLast(1)));
+
+  std::map<std::string, int64_t> default_button_map;
+  for (const auto& lighting_name : Impl::lighting_names)
+  {
+    const std::string publish_path = topic_prefix + lighting_name;
+    ROS_INFO_NAMED("TeleopAckerJoy", "publishing to %s", publish_path.c_str());
+    pimpl_->cmd_lights_pub.emplace(lighting_name,
+        this->create_publisher<std_msgs::msg::Bool>(
+          publish_path,
+          rclcpp::QoS(rclcpp::KeepLast(1))));
+
+    default_button_map.emplace(lighting_name, -1L);
+    pimpl_->lightingStates.emplace(lighting_name, false);
+  }
+
+  // subscriber
   pimpl_->joy_sub = this->create_subscription<sensor_msgs::msg::Joy>(
     "joy",
     rclcpp::QoS(rclcpp::KeepLast(1)),
     std::bind(&TeleopAckerJoy::Impl::joyCallback, this->pimpl_, std::placeholders::_1));
 
+  // config parameters
   pimpl_->require_enable_button = this->declare_parameter("require_enable_button", true);
   pimpl_->enable_button = this->declare_parameter("enable_button", 5);
   pimpl_->enable_turbo_button = this->declare_parameter("enable_turbo_button", -1);
   pimpl_->failsafe_delay_ms = std::chrono::milliseconds{this->declare_parameter("failsafe_delay_ms", 0)};
 
-  std::map<std::string, int64_t> default_map{
+  this->declare_parameters("lights", default_button_map);
+  this->get_parameters("lights", pimpl_->button_map);
+
+  std::map<std::string, int64_t> default_axis_map{
     {"linear", 5L},
     {"steering_angle", 6L},
     {"steering_angle_fine", -1L},
     {"steering_angle_velocity", -1L}
   };
-  this->declare_parameters("axis", default_map);
+  this->declare_parameters("axis", default_axis_map);
   this->get_parameters("axis", pimpl_->axis_map);
 
   std::map<std::string, double> default_scale_normal_map{
@@ -133,6 +170,13 @@ TeleopAckerJoy::TeleopAckerJoy(const rclcpp::NodeOptions& options) : Node("teleo
   ROS_INFO_COND_NAMED(pimpl_->enable_turbo_button >= 0, "TeleopAckerJoy",
     "Turbo on button %" PRId64 ".", pimpl_->enable_turbo_button);
 
+  for (const auto& [name, value] : pimpl_->button_map)
+  {
+    ROS_INFO_COND_NAMED(true || value != -1L, "TeleopAckerJoy",
+      "button '%s' on %" PRId64,
+      name.c_str(), value);
+  }
+
   for (const auto& [name, value] : pimpl_->axis_map)
   {
     ROS_INFO_COND_NAMED(value != -1L, "TeleopAckerJoy",
@@ -143,6 +187,7 @@ TeleopAckerJoy::TeleopAckerJoy(const rclcpp::NodeOptions& options) : Node("teleo
       name.c_str(), pimpl_->scale_map["turbo"][name]);
   }
 
+
   pimpl_->sent_disable_msg = false;
 
   // callback if re-setting during runtime
@@ -150,6 +195,10 @@ TeleopAckerJoy::TeleopAckerJoy(const rclcpp::NodeOptions& options) : Node("teleo
   [this](std::vector<rclcpp::Parameter> parameters)
   {
     static std::set<std::string> intparams = {
+      "lights.headlight",
+      "lights.turnsignal_left",
+      "lights.turnsignal_right",
+      "lights.flash",
       "axis.linear",
       "axis.steering_angle",
       "axis.steering_angle_fine",
@@ -178,8 +227,8 @@ TeleopAckerJoy::TeleopAckerJoy(const rclcpp::NodeOptions& options) : Node("teleo
         if (parameter.get_type() != rclcpp::ParameterType::PARAMETER_INTEGER)
         {
           result.reason = "Only integer values can be set for '" + parameter.get_name() + "'.";
-          RCLCPP_WARN(this->get_logger(), result.reason.c_str());
           result.successful = false;
+          RCLCPP_WARN(this->get_logger(), result.reason.c_str());
           return result;
         }
       }
@@ -188,8 +237,8 @@ TeleopAckerJoy::TeleopAckerJoy(const rclcpp::NodeOptions& options) : Node("teleo
         if (parameter.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE)
         {
           result.reason = "Only double values can be set for '" + parameter.get_name() + "'.";
-          RCLCPP_WARN(this->get_logger(), result.reason.c_str());
           result.successful = false;
+          RCLCPP_WARN(this->get_logger(), result.reason.c_str());
           return result;
         }
       }
@@ -198,8 +247,8 @@ TeleopAckerJoy::TeleopAckerJoy(const rclcpp::NodeOptions& options) : Node("teleo
         if (parameter.get_type() != rclcpp::ParameterType::PARAMETER_BOOL)
         {
           result.reason = "Only boolean values can be set for '" + parameter.get_name() + "'.";
-          RCLCPP_WARN(this->get_logger(), result.reason.c_str());
           result.successful = false;
+          RCLCPP_WARN(this->get_logger(), result.reason.c_str());
           return result;
         }
       }
@@ -209,7 +258,7 @@ TeleopAckerJoy::TeleopAckerJoy(const rclcpp::NodeOptions& options) : Node("teleo
     for (const auto & parameter : parameters)
     {
       const auto name = parameter.get_name();
-      RCLCPP_INFO(this->get_logger(), "parsing parameter '%s'", name
+      RCLCPP_INFO(this->get_logger(), "parsing parameter '%s'", name.c_str()
       );
 
       if (name == "require_enable_button")
@@ -232,6 +281,11 @@ TeleopAckerJoy::TeleopAckerJoy(const rclcpp::NodeOptions& options) : Node("teleo
       {
         const auto which = name.substr(std::string("axis.").length());
         this->pimpl_->axis_map[which] = parameter.get_value<rclcpp::PARAMETER_INTEGER>();
+      }
+      else if (name.rfind("lights.", 0) != std::string::npos)
+      {
+        const auto which = name.substr(std::string("lights.").length());
+        this->pimpl_->button_map[which] = parameter.get_value<rclcpp::PARAMETER_INTEGER>();
       }
       else if (name.rfind("scale.", 0) != std::string::npos)
       {
@@ -264,18 +318,34 @@ TeleopAckerJoy::~TeleopAckerJoy()
   delete pimpl_;
 }
 
-double getVal(const sensor_msgs::msg::Joy::SharedPtr joy_msg, const std::map<std::string, int64_t>& axis_map,
-              const std::map<std::string, double>& scale_map, const std::string& fieldname)
+double getValScaled(const sensor_msgs::msg::Joy::SharedPtr joy_msg,
+              const std::map<std::string, int64_t>& axis_map,
+              const std::map<std::string, double>& scale_map,
+              const std::string& fieldname)
 {
-  if (axis_map.find(fieldname) == axis_map.end() ||
-      axis_map.at(fieldname) == -1L ||
-      scale_map.find(fieldname) == scale_map.end() ||
-      static_cast<int>(joy_msg->axes.size()) <= axis_map.at(fieldname))
-  {
-    return 0.0;
-  }
+   if (axis_map.find(fieldname) == axis_map.end() ||
+       axis_map.at(fieldname) == -1L ||
+       scale_map.find(fieldname) == scale_map.end() ||
+       static_cast<int>(joy_msg->axes.size()) <= axis_map.at(fieldname))
+   {
+     return 0.0;
+   }
 
   return joy_msg->axes[axis_map.at(fieldname)] * scale_map.at(fieldname);
+}
+
+bool getButton(const sensor_msgs::msg::Joy& joy_msg,
+               const std::map<std::string, int64_t>& button_map,
+               const std::string& fieldname)
+{
+  if (button_map.find(fieldname) == button_map.end() ||
+      button_map.at(fieldname) == -1L ||
+      static_cast<int>(joy_msg.buttons.size()) <= button_map.at(fieldname))
+  {
+    return false;
+  }
+
+  return joy_msg.buttons[button_map.at(fieldname)] > 0;
 }
 
 void TeleopAckerJoy::Impl::sendCmdVelMsg(const sensor_msgs::msg::Joy::SharedPtr joy_msg,
@@ -285,12 +355,12 @@ void TeleopAckerJoy::Impl::sendCmdVelMsg(const sensor_msgs::msg::Joy::SharedPtr 
   auto cmd_vel_msg = std::make_unique<ackermann_msgs::msg::AckermannDriveStamped>();
 
   cmd_vel_msg->drive.speed = offset_map["linear"] +
-    getVal(joy_msg, axis_map, scale_map[which_map], "linear");
+    getValScaled(joy_msg, axis_map, scale_map[which_map], "linear");
   cmd_vel_msg->drive.steering_angle = offset_map["steering_angle"] +
-    getVal(joy_msg, axis_map, scale_map[which_map], "steering_angle") +
-    getVal(joy_msg, axis_map, scale_map[which_map], "steering_angle_fine");
+    getValScaled(joy_msg, axis_map, scale_map[which_map], "steering_angle") +
+    getValScaled(joy_msg, axis_map, scale_map[which_map], "steering_angle_fine");
   cmd_vel_msg->drive.steering_angle_velocity = offset_map["steering_angle_velocity"] +
-    std::abs(getVal(joy_msg, axis_map, scale_map[which_map], "steering_angle_velocity"));
+    std::abs(getValScaled(joy_msg, axis_map, scale_map[which_map], "steering_angle_velocity"));
 
   cmd_vel_pub->publish(std::move(cmd_vel_msg));
   sent_disable_msg = false;
@@ -325,9 +395,26 @@ void TeleopAckerJoy::Impl::joyCallback(const sensor_msgs::msg::Joy::SharedPtr jo
         auto cmd_vel_msg = std::make_unique<ackermann_msgs::msg::AckermannDriveStamped>();
         cmd_vel_pub->publish(std::move(cmd_vel_msg));
         sent_disable_msg = true;
+        // TODO: Parameter "send hazard on disable-msg"
       }
     }
   }
+
+  for (const auto& [button_name, _] : button_map)
+  {
+    const bool oldstate = getButton(lastMessage, button_map, button_name);
+    const bool newstate = getButton(*joy_msg, button_map, button_name);
+    // only on high transition
+    if (!oldstate && newstate)
+    {
+      lightingStates.at(button_name) = !lightingStates.at(button_name);
+      auto light_update = std::make_unique<std_msgs::msg::Bool>();
+      light_update->data = lightingStates.at(button_name);
+      cmd_lights_pub.at(button_name)->publish(std::move(light_update));
+    }
+  }
+
+  lastMessage = *joy_msg;
 }
 
 }  // namespace teleop_acker_joy

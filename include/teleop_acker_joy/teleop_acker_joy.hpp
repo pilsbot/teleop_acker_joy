@@ -28,12 +28,11 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSI
 #include <rclcpp/rclcpp.hpp>
 #include "teleop_acker_joy/teleop_acker_joy_export.h"
 
+#include <array>
+
 namespace teleop_acker_joy
 {
 
-/**
- * Class implementing a basic Joy -> Twist translation.
- */
 class TELEOP_ACKER_JOY_EXPORT TeleopAckerJoy : public rclcpp::Node
 {
 public:
@@ -42,6 +41,7 @@ public:
   virtual ~TeleopAckerJoy();
 
 private:
+
   struct Impl;
   Impl* pimpl_;
   OnSetParametersCallbackHandle::SharedPtr callback_handle;
