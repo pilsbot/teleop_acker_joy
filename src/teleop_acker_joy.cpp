@@ -165,7 +165,7 @@ TeleopAckerJoy::TeleopAckerJoy(const rclcpp::NodeOptions& options) : Node("teleo
   this->declare_parameters("offset", default_offset_map);
   this->get_parameters("offset", pimpl_->offset_map);
 
-  ROS_INFO_COND_NAMED(pimpl_->require_enable_button >= 0, "TeleopAckerJoy",
+  ROS_INFO_COND_NAMED(pimpl_->require_enable_button, "TeleopAckerJoy",
       "Teleop enable button %" PRId64 ".", pimpl_->enable_button);
   ROS_INFO_COND_NAMED(pimpl_->enable_turbo_button >= 0, "TeleopAckerJoy",
     "Turbo on button %" PRId64 ".", pimpl_->enable_turbo_button);
