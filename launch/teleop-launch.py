@@ -28,7 +28,7 @@ def generate_launch_description():
                 'autorepeat_rate': 20.0,
             }]),
         launch_ros.actions.Node(
-            package='teleop_acker_joy', executable='teleop_node',
+            package='teleop_acker_joy', executable='teleop_acker_node',
             name='teleop_acker_joy_node', parameters=[config_filepath],
             remappings={('/cmd/vel', launch.substitutions.LaunchConfiguration('joy_vel'))},
             ),

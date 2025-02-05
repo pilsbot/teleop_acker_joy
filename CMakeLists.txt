@@ -40,7 +40,7 @@ rclcpp_components_register_nodes(${PROJECT_NAME}
 add_executable(${PROJECT_NAME}_node src/teleop_node.cpp)
 target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME})
 set_target_properties(${PROJECT_NAME}_node
-  PROPERTIES OUTPUT_NAME teleop_node PREFIX "")
+  PROPERTIES OUTPUT_NAME teleop_acker_node PREFIX "")
 
 install(TARGETS ${PROJECT_NAME}
   ARCHIVE DESTINATION lib
