@@ -304,7 +304,7 @@ TeleopAckerJoy::TeleopAckerJoy(const rclcpp::NodeOptions& options) : Node("teleo
       }
       else
       {
-        RCLCPP_WARN(this->get_logger(), "Parameter '%s' is not required and thus is ignored", name);
+        RCLCPP_WARN(this->get_logger(), "Parameter '%s' is not required and thus is ignored", name.c_str());
       }
     }
     return result;
